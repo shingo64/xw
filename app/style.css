@@ -54,7 +54,7 @@ input[type=number],input[type=datetime-local]{font-size:16px;padding:10px 12px;b
 .inline{display:flex;align-items:center;gap:8px;margin-top:6px}
 .inline input{flex:1}
 label{font-size:13px;color:var(--muted)}
-#map{height:calc(100vh - 180px);min-height:400px;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
+#map{height:calc((100vh - 180px) / 2);min-height:220px;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .map-legend{display:flex;gap:14px;font-size:12px;color:var(--muted);justify-content:center;padding:10px 0 0}
 .map-filters{display:flex;flex-wrap:wrap;gap:6px;padding:10px 0 0;justify-content:center}
 .filter{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--muted);padding:6px 10px;border-radius:999px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:2px;line-height:1;transition:all 0.15s}
