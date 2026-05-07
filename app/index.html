@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b3d2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="XW100">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="style.css">
+  <title>XW100</title>
+</head>
+<body>
+  <header>
+    <div class="title">XW100</div>
+    <div id="gps-indicator" class="gps off" title="GPS">●</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="pace">ペース</button>
+    <button class="tab" data-tab="map">マップ</button>
+    <button class="tab" data-tab="settings">設定</button>
+  </nav>
+
+  <main>
+    <!-- ペース画面 -->
+    <section id="tab-pace" class="tab-panel active">
+      <div class="card big">
+        <div class="label">経過時間</div>
+        <div class="value mono" id="elapsed">--:--:--</div>
+      </div>
+
+      <div class="card big">
+        <div class="label">スタートから（コース上）</div>
+        <div class="value mono"><span id="cur-km">--.--</span> <span class="unit">km 地点</span></div>
+        <div class="sub" id="cur-detail">--</div>
+        <div class="sub" id="cur-offcourse"></div>
+      </div>
+
+      <div class="card big focus">
+        <div class="label">次の関門</div>
+        <div class="value mono" id="next-cp-name">--</div>
+        <div class="sub-row">
+          <div><div class="sub-label">そこまでの距離</div><div class="sub-value mono" id="next-cp-dist">--.- km</div></div>
+          <div><div class="sub-label">到着予想</div><div class="sub-value mono" id="next-cp-eta">--:--</div></div>
+        </div>
+        <div class="sub-row">
+          <div><div class="sub-label">関門締切</div><div class="sub-value mono" id="next-cp-cutoff">--:--</div></div>
+          <div><div class="sub-label">締切までの貯金</div><div class="sub-value mono" id="next-cp-margin">--</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="label">全関門</div>
+        <table class="cp-table">
+          <thead><tr><th>CP</th><th>km</th><th>到着</th><th>関門</th><th>貯金</th></tr></thead>
+          <tbody id="cp-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="card big">
+        <div class="label">ゴール到着予想</div>
+        <div class="value mono" id="goal-eta">--:--</div>
+        <div class="sub" id="goal-margin">制限時刻まで --</div>
+      </div>
+
+      <div class="card actions">
+        <button id="refresh-gps" class="btn primary">現在地を更新</button>
+        <div class="hint">画面を開いた時にGPSを取得します。常時起動はしません。</div>
+      </div>
+    </section>
+
+    <!-- マップ画面 -->
+    <section id="tab-map" class="tab-panel">
+      <div id="map"></div>
+      <div class="map-filters" role="group" aria-label="表示フィルタ">
+        <button class="filter on" data-layer="all">全て</button>
+        <button class="filter on" data-layer="cp"><span class="lg lg-cp">●</span>CP</button>
+        <button class="filter on" data-layer="toilet"><span class="lg lg-toilet">●</span>トイレ</button>
+        <button class="filter on" data-layer="seven"><span class="badge b-7">7</span>セブン</button>
+        <button class="filter on" data-layer="fm"><span class="badge b-fm">F</span>ファミマ</button>
+        <button class="filter on" data-layer="lawson"><span class="badge b-lw">L</span>ローソン</button>
+        <button class="filter on" data-layer="conveni-other"><span class="badge b-x">+</span>他コンビニ</button>
+        <button class="filter on" data-layer="sento"><span class="emoji">♨️</span>銭湯</button>
+        <button class="filter on" data-layer="km"><span class="lg lg-km">●</span>1km</button>
+      </div>
+    </section>
+
+    <!-- 設定画面 -->
+    <section id="tab-settings" class="tab-panel">
+      <div class="card">
+        <label for="set-start">スタート時刻（実際のスタート時刻を入れてね）</label>
+        <input type="datetime-local" id="set-start">
+        <div class="hint">デフォルト: 2026-05-23 08:45（自分の指定スタート時刻）</div>
+      </div>
+
+      <div class="card">
+        <label for="set-target-hours">目標タイム（任意）</label>
+        <div class="inline">
+          <input type="number" id="set-target-hours" min="0" max="40" step="0.5" placeholder="例: 24">
+          <span>時間でゴール</span>
+        </div>
+        <div class="hint">未設定なら関門ベースで管理。設定すると目標ペースに対する貯金/借金も表示</div>
+      </div>
+
+      <div class="card">
+        <button id="save-settings" class="btn primary">保存</button>
+        <button id="reset-settings" class="btn">リセット</button>
+        <div class="hint" id="save-status"></div>
+      </div>
+
+      <div class="card">
+        <div class="label">アプリ情報</div>
+        <div class="sub">第12回東京エクストリームウォーク100 / 99.58km / CP5箇所</div>
+        <div class="sub" id="app-version">v0.1.0</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0b3d2e"/>
+  <circle cx="256" cy="256" r="220" fill="#168058"/>
+  <text x="256" y="245" font-family="Arial,sans-serif" font-weight="bold" font-size="120" fill="#e8efe9" text-anchor="middle" dominant-baseline="middle">XW</text>
+  <text x="256" y="345" font-family="Arial,sans-serif" font-weight="bold" font-size="72"  fill="#5dd39e" text-anchor="middle" dominant-baseline="middle">100</text>
+</svg>
