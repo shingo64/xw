@@ -13,7 +13,11 @@ const LS = {
 
 const DEFAULT_START = "2026-05-23T08:45:00+09:00";
 const HISTORY_MAX = 20;
-const TEST_MODE = new URLSearchParams(location.search).get("test") === "1";
+const URL_PARAMS = new URLSearchParams(location.search);
+const TEST_MODE = URL_PARAMS.get("test") === "1";
+// ?course=nakasendo で練習用コース（中山道）を読み込む。デフォルトはXW100本番コース
+const COURSE_ID = URL_PARAMS.get("course") || "xw100";
+const IS_XW100 = COURSE_ID === "xw100";
 
 // プランC: 本番前モードでの予想時刻計算用（4.55km/h平均ではなく区間別ペース）
 const PLAN_C = {
@@ -189,23 +193,29 @@ function buildCheckpointStatus(nowMs, mode) {
   const inferredKmh = remainingHours > 0 && remainingKm > 0 ? remainingKm / remainingHours : null;
   const usePace = paceKmh || inferredKmh || 4.5;
 
+  // race モードかつスタート未押下&ペース履歴なしなら、ETAを出さない（--:--表示）
+  const raceHasData = state.started || state.paceKmh != null;
+
   const etaForKm = (km) => {
     if (mode === "plan") return planCEtaMs(km, state.startMs);
+    if (!raceHasData) return null;
     return nowMs + ((km - (cur || 0)) / usePace) * 3600000;
   };
 
   const rows = [];
   let sentoInserted = false;
   for (const cp of cps) {
-    // 銭湯入店/出発の行を 57.2km < cp.km の手前で挿入
+    // 銭湯入店/出発の行を 57.2km < cp.km の手前で挿入（XW100コースのみ自然に該当）
     if (!sentoInserted && cp.km > PLAN_C.sento.km) {
-      const sentoPassed = mode === "race" && cur != null && cur >= PLAN_C.sento.km - 0.05;
+      const sentoPassed = state.started && cur != null && cur >= PLAN_C.sento.km - 0.05;
       let arriveMs = null, departMs = null;
       if (!sentoPassed) {
-        arriveMs = mode === "plan"
-          ? planCEtaMs(PLAN_C.sento.km, state.startMs)
-          : nowMs + ((PLAN_C.sento.km - (cur || 0)) / usePace) * 3600000;
-        departMs = arriveMs + PLAN_C.sento.minutes * 60000;
+        if (mode === "plan") {
+          arriveMs = planCEtaMs(PLAN_C.sento.km, state.startMs);
+        } else if (raceHasData) {
+          arriveMs = nowMs + ((PLAN_C.sento.km - (cur || 0)) / usePace) * 3600000;
+        }
+        departMs = arriveMs ? arriveMs + PLAN_C.sento.minutes * 60000 : null;
       }
       const distKm = PLAN_C.sento.km - (cur || 0);
       rows.push({ kind: "sento", name: "銭湯入店", km: PLAN_C.sento.km, etaMs: arriveMs, passed: sentoPassed, distKm });
@@ -213,7 +223,7 @@ function buildCheckpointStatus(nowMs, mode) {
       sentoInserted = true;
     }
 
-    const passed = mode === "race" && cur != null && cur >= cp.km - 0.05;
+    const passed = state.started && cur != null && cur >= cp.km - 0.05;
     const distKm = cur == null ? cp.km : cp.km - cur;
     const etaMs = passed ? null : etaForKm(cp.km);
     const cutoffMs = new Date(cp.cutoff).getTime();
@@ -229,17 +239,20 @@ function buildCheckpointStatus(nowMs, mode) {
 // ---------- 描画: ペース画面 ----------
 function renderPace() {
   const now = Date.now();
-  const isRace = state.started;
+  const isStarted = state.started;
+  // PlanCモードはXW100コースかつ未スタートの時のみ。練習コースはPlanCを使わない
+  const isPlanMode = !isStarted && IS_XW100;
+  const mode = isPlanMode ? "plan" : "race";
 
   // 経過時間 / 本番までのカウントダウン
   const elapsedLabelEl = document.getElementById("elapsed-label");
   const elapsedEl = document.getElementById("elapsed");
-  if (isRace) {
+  if (isStarted) {
     elapsedLabelEl.textContent = "経過時間";
     const elapsed = state.startMs ? (now - state.startMs) / 1000 : null;
     elapsedEl.textContent = elapsed != null && elapsed >= 0 ? fmtHMS(elapsed) : "--:--:--";
   } else {
-    elapsedLabelEl.textContent = "本番まで";
+    elapsedLabelEl.textContent = IS_XW100 ? "本番まで" : "スタートまで";
     elapsedEl.textContent = (state.startMs && state.startMs > now) ? fmtCountdown(state.startMs - now) : "0日 0時間 0分";
   }
 
@@ -257,18 +270,18 @@ function renderPace() {
   // 「今をスタートにする」ボタンは未押下時のみ表示（誤タップ事故防止）
   const startNowBtn = document.getElementById("set-start-now");
   if (startNowBtn) {
-    startNowBtn.style.display = isRace ? "none" : "";
+    startNowBtn.style.display = isStarted ? "none" : "";
   }
 
-  // 本番前注釈の表示切替
-  document.querySelectorAll(".pre-race-note").forEach((n) => { n.hidden = isRace; });
+  // 本番前注釈はPlanCモード(XW100の本番前)のみ表示
+  document.querySelectorAll(".pre-race-note").forEach((n) => { n.hidden = !isPlanMode; });
 
-  // 各カードのラベル切替
-  document.getElementById("cp-arrival-th").textContent = isRace ? "到着" : "プランC";
-  document.getElementById("cp-table-label").textContent = isRace ? "全関門・銭湯" : "全関門・銭湯（プランC基準）";
-  document.getElementById("next-cp-label").textContent = isRace ? "次の関門" : "次の関門（プランC基準）";
-  document.getElementById("next-cp-eta-label").textContent = isRace ? "到着予想" : "プランC到着";
-  document.getElementById("goal-eta-label").textContent = isRace ? "ゴール到着予想" : "ゴール到着予想（プランC）";
+  // 各カードのラベル切替（PlanCモードのみ「プランC基準」と注記）
+  document.getElementById("cp-arrival-th").textContent = isPlanMode ? "プランC" : "到着";
+  document.getElementById("cp-table-label").textContent = isPlanMode ? "全関門・銭湯（プランC基準）" : (IS_XW100 ? "全関門・銭湯" : "全行程");
+  document.getElementById("next-cp-label").textContent = isPlanMode ? "次の関門（プランC基準）" : (IS_XW100 ? "次の関門" : "次の地点");
+  document.getElementById("next-cp-eta-label").textContent = isPlanMode ? "プランC到着" : "到着予想";
+  document.getElementById("goal-eta-label").textContent = isPlanMode ? "ゴール到着予想（プランC）" : "ゴール到着予想";
 
   // データ未ロード時はここまで
   if (!state.course || !state.cutoffs) {
@@ -302,7 +315,7 @@ function renderPace() {
   }
 
   // 関門 + 銭湯
-  const rows = buildCheckpointStatus(now, isRace ? "race" : "plan");
+  const rows = buildCheckpointStatus(now, mode);
   const tbody = document.getElementById("cp-tbody");
   tbody.innerHTML = "";
   let nextCp = null;
@@ -596,7 +609,9 @@ async function refreshGPS() {
 
 // ---------- 設定 ----------
 function loadSettings() {
-  const startISO = localStorage.getItem(LS.startISO) || DEFAULT_START;
+  // localStorage > cutoffs.user_start > DEFAULT_START の順で初期値を決める
+  const cutoffsStart = state.cutoffs && state.cutoffs.user_start;
+  const startISO = localStorage.getItem(LS.startISO) || cutoffsStart || DEFAULT_START;
   const targetH = localStorage.getItem(LS.targetHours);
   state.startMs = new Date(startISO).getTime();
   state.targetHours = targetH ? parseFloat(targetH) : null;
@@ -751,6 +766,14 @@ function setStartToNow() {
 }
 
 function setupUI() {
+  // 練習コース読込時はヘッダーにコース名バッジを出す
+  if (!IS_XW100) {
+    const banner = document.getElementById("course-banner");
+    if (banner) {
+      banner.textContent = COURSE_ID === "nakasendo" ? "中山道" : COURSE_ID;
+      banner.hidden = false;
+    }
+  }
   // イベントリスナーは即座に付ける（データ読み込みの成否に関係なく動かす）
   document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
   document.getElementById("refresh-gps").addEventListener("click", () => {
@@ -781,11 +804,15 @@ function setupUI() {
 
 async function loadData() {
   try {
+    const courseFile = IS_XW100 ? "data/course.json" : `data/course-${COURSE_ID}.json`;
+    const cutoffsFile = IS_XW100 ? "data/cutoffs.json" : `data/cutoffs-${COURSE_ID}.json`;
+    const conveniFile = IS_XW100 ? "data/conveni.json" : `data/conveni-${COURSE_ID}.json`;
     const [course, cutoffs, conveni, sento] = await Promise.all([
-      fetch("data/course.json").then((r) => { if (!r.ok) throw new Error("course.json " + r.status); return r.json(); }),
-      fetch("data/cutoffs.json").then((r) => { if (!r.ok) throw new Error("cutoffs.json " + r.status); return r.json(); }),
-      fetch("data/conveni.json").then((r) => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
-      fetch("data/sento.json").then((r) => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
+      fetch(courseFile).then((r) => { if (!r.ok) throw new Error(courseFile + " " + r.status); return r.json(); }),
+      fetch(cutoffsFile).then((r) => { if (!r.ok) throw new Error(cutoffsFile + " " + r.status); return r.json(); }),
+      fetch(conveniFile).then((r) => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
+      // 銭湯はXW100専用（夜間休憩用）
+      IS_XW100 ? fetch("data/sento.json").then((r) => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })) : Promise.resolve({ items: [] }),
     ]);
     state.course = course;
     state.cutoffs = cutoffs;
