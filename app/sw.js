@@ -1,5 +1,5 @@
 // Service Worker: オフラインキャッシュ + 自動アップデート
-const VERSION = "v0.8.0";
+const VERSION = "v0.9.0";
 const CACHE = `xw100-${VERSION}`;
 const APP_FILES = [
   "./",
@@ -11,6 +11,9 @@ const APP_FILES = [
   "./data/cutoffs.json",
   "./data/conveni.json",
   "./data/sento.json",
+  "./data/course-nakasendo.json",
+  "./data/cutoffs-nakasendo.json",
+  "./data/conveni-nakasendo.json",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
 ];

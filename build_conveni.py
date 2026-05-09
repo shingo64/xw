@@ -8,14 +8,21 @@
 - app/data/conveni.json に出力
 """
 import json
+import sys
 import urllib.request
 import urllib.parse
 import math
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-COURSE_JSON = ROOT / "app" / "data" / "course.json"
-OUT = ROOT / "app" / "data" / "conveni.json"
+# 第1引数でコースIDを切替（"xw100" がデフォルト = course.json/conveni.json）
+COURSE_ID = sys.argv[1] if len(sys.argv) > 1 else "xw100"
+if COURSE_ID == "xw100":
+    COURSE_JSON = ROOT / "app" / "data" / "course.json"
+    OUT = ROOT / "app" / "data" / "conveni.json"
+else:
+    COURSE_JSON = ROOT / "app" / "data" / f"course-{COURSE_ID}.json"
+    OUT = ROOT / "app" / "data" / f"conveni-{COURSE_ID}.json"
 BUFFER_M = 120  # コースから何m以内を「沿い」とみなすか
 
 OVERPASS = "https://overpass-api.de/api/interpreter"
