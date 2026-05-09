@@ -13,6 +13,7 @@ const LS = {
 
 const DEFAULT_START = "2026-05-23T08:45:00+09:00";
 const HISTORY_MAX = 20;
+const TEST_MODE = new URLSearchParams(location.search).get("test") === "1";
 
 // プランC: 本番前モードでの予想時刻計算用（4.55km/h平均ではなく区間別ペース）
 const PLAN_C = {
@@ -681,6 +682,55 @@ function showFatal(msg) {
   bar.textContent = "エラー: " + (msg && msg.stack ? msg.stack : String(msg));
 }
 
+// テストモード: 指定kmのコース上座標を補間で求める
+function locateOnCourseByKm(km) {
+  const cum = state.cumDistKm;
+  const c = state.course.course;
+  const total = cum[cum.length - 1];
+  const target = Math.max(0, Math.min(km, total));
+  if (target <= 0) return [c[0][0], c[0][1]];
+  if (target >= total) return [c[c.length - 1][0], c[c.length - 1][1]];
+  for (let i = 1; i < cum.length; i++) {
+    if (cum[i] >= target) {
+      const t = (target - cum[i - 1]) / (cum[i] - cum[i - 1]);
+      return [c[i - 1][0] + (c[i][0] - c[i - 1][0]) * t, c[i - 1][1] + (c[i][1] - c[i - 1][1]) * t];
+    }
+  }
+  return [c[c.length - 1][0], c[c.length - 1][1]];
+}
+
+function applyTestKm() {
+  if (!state.course || !state.cumDistKm) {
+    alert("コースデータ読込中。少し待ってから再度押して。");
+    return;
+  }
+  const v = parseFloat(document.getElementById("test-km").value);
+  if (!isFinite(v)) { alert("kmを入力して"); return; }
+  const [lat, lon] = locateOnCourseByKm(v);
+  // テスト時はlocalStorageに書かない（実セッション汚染防止）
+  state.curFix = { lat, lon, accuracy: 0, t: Date.now() };
+  state.curKm = v;
+  state.courseOffsetM = 0;
+  state.projPoint = [lat, lon];
+  state.paceKmh = null;
+  if (state.map) updateMyMarker();
+  setGpsState("live");
+  renderPace();
+}
+
+function clearTestKm() {
+  state.curFix = null;
+  state.curKm = null;
+  state.courseOffsetM = null;
+  state.projPoint = null;
+  state.paceKmh = null;
+  if (state.meMarker && state.map) { state.map.removeLayer(state.meMarker); state.meMarker = null; }
+  if (state.projMarker && state.map) { state.map.removeLayer(state.projMarker); state.projMarker = null; }
+  if (state.projLine && state.map) { state.map.removeLayer(state.projLine); state.projLine = null; }
+  setGpsState("off");
+  renderPace();
+}
+
 function setStartToNow() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -715,6 +765,17 @@ function setupUI() {
   document.getElementById("reset-settings").addEventListener("click", () => {
     try { resetSettings(); } catch (e) { showFatal(e); }
   });
+  if (TEST_MODE) {
+    document.querySelectorAll(".test-only").forEach((e) => { e.hidden = false; });
+    document.getElementById("test-banner").hidden = false;
+    document.getElementById("apply-test-km").addEventListener("click", () => {
+      try { applyTestKm(); } catch (e) { showFatal(e); }
+    });
+    document.getElementById("clear-test-km").addEventListener("click", () => {
+      try { clearTestKm(); } catch (e) { showFatal(e); }
+    });
+    console.log("[XW100] TEST MODE enabled");
+  }
   console.log("[XW100] UI handlers attached");
 }
 
