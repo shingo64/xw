@@ -17,7 +17,7 @@
 </head>
 <body>
   <header>
-    <div class="title">XW100</div>
+    <div class="title">XW100<span id="test-banner" class="test-banner" hidden>TEST</span></div>
     <div id="gps-indicator" class="gps off" title="GPS">●</div>
   </header>
 
@@ -124,6 +124,20 @@
         <div class="label">アプリ情報</div>
         <div class="sub">第12回東京エクストリームウォーク100 / 99.58km / CP5箇所</div>
         <div class="sub" id="app-version">v0.1.0</div>
+      </div>
+
+      <div class="card test-only" hidden>
+        <div class="label">🧪 テストモード</div>
+        <label for="test-km">仮想現在km（GPSを無視してこの地点にいる扱い）</label>
+        <div class="inline">
+          <input type="number" id="test-km" min="0" max="100" step="0.1" placeholder="例: 54">
+          <span>km</span>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button id="apply-test-km" class="btn primary">この地点にいる扱い</button>
+          <button id="clear-test-km" class="btn">解除</button>
+        </div>
+        <div class="hint">テスト用: ?test=1 付きURLでアクセス時のみ表示。CP通過判定・貯金・関門遷移を実機で確認できる</div>
       </div>
     </section>
   </main>
