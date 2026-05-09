@@ -31,8 +31,10 @@
     <!-- ペース画面 -->
     <section id="tab-pace" class="tab-panel active">
       <div class="card big">
-        <div class="label">経過時間</div>
+        <div class="label" id="elapsed-label">経過時間</div>
         <div class="value mono" id="elapsed">--:--:--</div>
+        <div class="sub" id="start-display">スタート: --</div>
+        <button id="set-start-now" class="btn primary start-now-btn">今をスタートにする</button>
       </div>
 
       <div class="card big">
@@ -40,33 +42,37 @@
         <div class="value mono"><span id="cur-km">--.--</span> <span class="unit">km 地点</span></div>
         <div class="sub" id="cur-detail">--</div>
         <div class="sub" id="cur-offcourse"></div>
+        <div class="sub pre-race-note" hidden>※本番前は参考表示</div>
       </div>
 
       <div class="card big focus">
-        <div class="label">次の関門</div>
+        <div class="label" id="next-cp-label">次の関門</div>
         <div class="value mono" id="next-cp-name">--</div>
         <div class="sub-row">
           <div><div class="sub-label">そこまでの距離</div><div class="sub-value mono" id="next-cp-dist">--.- km</div></div>
-          <div><div class="sub-label">到着予想</div><div class="sub-value mono" id="next-cp-eta">--:--</div></div>
+          <div><div class="sub-label" id="next-cp-eta-label">到着予想</div><div class="sub-value mono" id="next-cp-eta">--:--</div></div>
         </div>
         <div class="sub-row">
           <div><div class="sub-label">関門締切</div><div class="sub-value mono" id="next-cp-cutoff">--:--</div></div>
           <div><div class="sub-label">締切までの貯金</div><div class="sub-value mono" id="next-cp-margin">--</div></div>
         </div>
+        <div class="sub pre-race-note" hidden>※本番前は参考表示</div>
       </div>
 
       <div class="card">
-        <div class="label">全関門</div>
+        <div class="label" id="cp-table-label">全関門</div>
         <table class="cp-table">
-          <thead><tr><th>CP</th><th>km</th><th>到着</th><th>関門</th><th>貯金</th></tr></thead>
+          <thead><tr><th>地点</th><th>km</th><th id="cp-arrival-th">到着</th><th>関門</th><th>貯金</th></tr></thead>
           <tbody id="cp-tbody"></tbody>
         </table>
+        <div class="sub pre-race-note" hidden>※本番前は参考表示（プランC: 0-30km 5.0 / 30-60km 4.5 / 60-100km 4.2 km/h + 銭湯60分）</div>
       </div>
 
       <div class="card big">
-        <div class="label">ゴール到着予想</div>
+        <div class="label" id="goal-eta-label">ゴール到着予想</div>
         <div class="value mono" id="goal-eta">--:--</div>
         <div class="sub" id="goal-margin">制限時刻まで --</div>
+        <div class="sub pre-race-note" hidden>※本番前は参考表示</div>
       </div>
 
       <div class="card actions">

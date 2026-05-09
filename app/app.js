@@ -8,10 +8,21 @@ const LS = {
   targetHours: "xw.target_hours",
   lastFix: "xw.last_fix",
   history: "xw.history", // [{t, km}] 過去の累積距離履歴。直近平均ペース算出用
+  started: "xw.started", // "1" なら「今をスタートにする」を押下済み（誤タップ防止のためボタン非表示）
 };
 
 const DEFAULT_START = "2026-05-23T08:45:00+09:00";
 const HISTORY_MAX = 20;
+
+// プランC: 本番前モードでの予想時刻計算用（4.55km/h平均ではなく区間別ペース）
+const PLAN_C = {
+  zones: [
+    { maxKm: 30, kmh: 5.0 },   // 0-30km
+    { maxKm: 60, kmh: 4.5 },   // 30-60km
+    { maxKm: 1e9, kmh: 4.2 },  // 60km-
+  ],
+  sento: { km: 57.2, minutes: 60, name: "深川温泉常盤湯" },
+};
 
 const state = {
   course: null,
@@ -56,6 +67,29 @@ const fmtClock = (date) => {
   const d = new Date(date);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
+const fmtCountdown = (ms) => {
+  if (ms <= 0) return "0日 0時間 0分";
+  const totalMin = Math.floor(ms / 60000);
+  const days = Math.floor(totalMin / (24 * 60));
+  const hours = Math.floor((totalMin % (24 * 60)) / 60);
+  const mins = totalMin % 60;
+  return `${days}日 ${hours}時間 ${mins}分`;
+};
+
+// プランC: 区間別ペース + 銭湯休憩でkmまでの到達時刻を計算
+function planCEtaMs(km, startMs) {
+  let walkingHours = 0;
+  let prev = 0;
+  for (const z of PLAN_C.zones) {
+    if (km <= prev) break;
+    const segEnd = Math.min(km, z.maxKm);
+    walkingHours += (segEnd - prev) / z.kmh;
+    prev = segEnd;
+  }
+  const breakMs = (km > PLAN_C.sento.km) ? PLAN_C.sento.minutes * 60000 : 0;
+  return startMs + walkingHours * 3600000 + breakMs;
+}
+
 const fmtClockWithDay = (date, baseDate) => {
   if (!date) return "--:--";
   const d = new Date(date);
@@ -143,11 +177,10 @@ function pushHistory(t, km) {
 }
 
 // ---------- 関門計算 ----------
-function buildCheckpointStatus(nowMs) {
+// mode: 'race' = 実績ペース / GPSベース。'plan' = プランC基準（本番前用）
+function buildCheckpointStatus(nowMs, mode) {
   const cps = state.cutoffs.checkpoints.filter((c) => c.name !== "START");
-  const startMs = state.startMs;
   const cur = state.curKm == null ? null : state.curKm;
-  // 残距離からの予想時刻を出す。ペース不明時はゴール制限時刻と現在地から最低必要ペースで暫定
   const paceKmh = state.paceKmh && state.paceKmh > 0.5 ? state.paceKmh : null;
   const goalCutoffMs = new Date(state.cutoffs.checkpoints.find((c) => c.name === "GOAL").cutoff).getTime();
   const remainingHours = (goalCutoffMs - nowMs) / 3600000;
@@ -155,24 +188,86 @@ function buildCheckpointStatus(nowMs) {
   const inferredKmh = remainingHours > 0 && remainingKm > 0 ? remainingKm / remainingHours : null;
   const usePace = paceKmh || inferredKmh || 4.5;
 
-  return cps.map((cp) => {
-    const passed = cur != null && cur >= cp.km - 0.05;
+  const etaForKm = (km) => {
+    if (mode === "plan") return planCEtaMs(km, state.startMs);
+    return nowMs + ((km - (cur || 0)) / usePace) * 3600000;
+  };
+
+  const rows = [];
+  let sentoInserted = false;
+  for (const cp of cps) {
+    // 銭湯入店/出発の行を 57.2km < cp.km の手前で挿入
+    if (!sentoInserted && cp.km > PLAN_C.sento.km) {
+      const sentoPassed = mode === "race" && cur != null && cur >= PLAN_C.sento.km - 0.05;
+      let arriveMs = null, departMs = null;
+      if (!sentoPassed) {
+        arriveMs = mode === "plan"
+          ? planCEtaMs(PLAN_C.sento.km, state.startMs)
+          : nowMs + ((PLAN_C.sento.km - (cur || 0)) / usePace) * 3600000;
+        departMs = arriveMs + PLAN_C.sento.minutes * 60000;
+      }
+      const distKm = PLAN_C.sento.km - (cur || 0);
+      rows.push({ kind: "sento", name: "銭湯入店", km: PLAN_C.sento.km, etaMs: arriveMs, passed: sentoPassed, distKm });
+      rows.push({ kind: "sento", name: "銭湯出発", km: PLAN_C.sento.km, etaMs: departMs, passed: sentoPassed, distKm });
+      sentoInserted = true;
+    }
+
+    const passed = mode === "race" && cur != null && cur >= cp.km - 0.05;
     const distKm = cur == null ? cp.km : cp.km - cur;
-    const etaMs = passed ? null : nowMs + (distKm / usePace) * 3600000;
+    const etaMs = passed ? null : etaForKm(cp.km);
     const cutoffMs = new Date(cp.cutoff).getTime();
     const marginSec = etaMs ? (cutoffMs - etaMs) / 1000 : null;
-    return {
-      cp, passed, distKm, etaMs, cutoffMs, marginSec,
-    };
-  });
+    rows.push({
+      kind: "cp",
+      cp, passed, distKm, etaMs, cutoffMs, marginSec, name: cp.name, km: cp.km,
+    });
+  }
+  return rows;
 }
 
 // ---------- 描画: ペース画面 ----------
 function renderPace() {
   const now = Date.now();
-  // 経過時間
-  const elapsed = state.startMs ? (now - state.startMs) / 1000 : null;
-  document.getElementById("elapsed").textContent = elapsed != null && elapsed >= 0 ? fmtHMS(elapsed) : "--:--:--";
+  const isRace = state.started;
+
+  // 経過時間 / 本番までのカウントダウン
+  const elapsedLabelEl = document.getElementById("elapsed-label");
+  const elapsedEl = document.getElementById("elapsed");
+  if (isRace) {
+    elapsedLabelEl.textContent = "経過時間";
+    const elapsed = state.startMs ? (now - state.startMs) / 1000 : null;
+    elapsedEl.textContent = elapsed != null && elapsed >= 0 ? fmtHMS(elapsed) : "--:--:--";
+  } else {
+    elapsedLabelEl.textContent = "本番まで";
+    elapsedEl.textContent = (state.startMs && state.startMs > now) ? fmtCountdown(state.startMs - now) : "0日 0時間 0分";
+  }
+
+  // スタート時刻表示（ペース画面トップ）
+  const startEl = document.getElementById("start-display");
+  if (startEl) {
+    if (state.startMs) {
+      const d = new Date(state.startMs);
+      const pad = (n) => String(n).padStart(2, "0");
+      startEl.textContent = `スタート: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } else {
+      startEl.textContent = "スタート: --";
+    }
+  }
+  // 「今をスタートにする」ボタンは未押下時のみ表示（誤タップ事故防止）
+  const startNowBtn = document.getElementById("set-start-now");
+  if (startNowBtn) {
+    startNowBtn.style.display = isRace ? "none" : "";
+  }
+
+  // 本番前注釈の表示切替
+  document.querySelectorAll(".pre-race-note").forEach((n) => { n.hidden = isRace; });
+
+  // 各カードのラベル切替
+  document.getElementById("cp-arrival-th").textContent = isRace ? "到着" : "プランC";
+  document.getElementById("cp-table-label").textContent = isRace ? "全関門・銭湯" : "全関門・銭湯（プランC基準）";
+  document.getElementById("next-cp-label").textContent = isRace ? "次の関門" : "次の関門（プランC基準）";
+  document.getElementById("next-cp-eta-label").textContent = isRace ? "到着予想" : "プランC到着";
+  document.getElementById("goal-eta-label").textContent = isRace ? "ゴール到着予想" : "ゴール到着予想（プランC）";
 
   // データ未ロード時はここまで
   if (!state.course || !state.cutoffs) {
@@ -205,22 +300,30 @@ function renderPace() {
     offEl.textContent = "";
   }
 
-  // 関門
-  const cpStatus = buildCheckpointStatus(now);
+  // 関門 + 銭湯
+  const rows = buildCheckpointStatus(now, isRace ? "race" : "plan");
   const tbody = document.getElementById("cp-tbody");
   tbody.innerHTML = "";
   let nextCp = null;
-  for (const s of cpStatus) {
-    if (!s.passed && !nextCp) nextCp = s;
+  for (const s of rows) {
+    if (s.kind === "cp" && !s.passed && !nextCp) nextCp = s;
     const tr = document.createElement("tr");
     if (s.passed) tr.classList.add("passed");
-    const marginCls = s.passed ? "" : (s.marginSec == null ? "" : (s.marginSec > 1800 ? "margin-ok" : (s.marginSec > 0 ? "margin-warn" : "margin-bad")));
+    if (s.kind === "sento") tr.classList.add("sento-row");
+
+    const arrivalCell = s.passed ? "通過" : (s.etaMs ? fmtClockWithDay(s.etaMs) : "--:--");
+    const cutoffCell = s.kind === "sento" ? "—" : fmtClockWithDay(s.cutoffMs);
+    const marginCell = s.kind === "sento" ? "—" :
+      (s.passed ? "✓" : (s.marginSec != null ? fmtHM(s.marginSec) : "--"));
+    const marginCls = s.kind === "sento" ? "" :
+      (s.passed ? "" : (s.marginSec == null ? "" : (s.marginSec > 1800 ? "margin-ok" : (s.marginSec > 0 ? "margin-warn" : "margin-bad"))));
+
     tr.innerHTML = `
-      <td>${s.cp.name}</td>
-      <td>${s.cp.km}</td>
-      <td>${s.passed ? "通過" : (s.etaMs ? fmtClockWithDay(s.etaMs) : "--:--")}</td>
-      <td>${fmtClockWithDay(s.cutoffMs)}</td>
-      <td class="${marginCls}">${s.passed ? "✓" : (s.marginSec != null ? fmtHM(s.marginSec) : "--")}</td>
+      <td>${s.name}</td>
+      <td>${s.km}</td>
+      <td>${arrivalCell}</td>
+      <td>${cutoffCell}</td>
+      <td class="${marginCls}">${marginCell}</td>
     `;
     tbody.appendChild(tr);
   }
@@ -243,7 +346,7 @@ function renderPace() {
   }
 
   // ゴール予想
-  const goal = cpStatus.find((s) => s.cp.name === "GOAL");
+  const goal = rows.find((s) => s.kind === "cp" && s.cp.name === "GOAL");
   if (goal) {
     document.getElementById("goal-eta").textContent = goal.passed ? "ゴール!" : (goal.etaMs ? fmtClockWithDay(goal.etaMs) : "--:--");
     const margin = goal.marginSec;
@@ -496,6 +599,7 @@ function loadSettings() {
   const targetH = localStorage.getItem(LS.targetHours);
   state.startMs = new Date(startISO).getTime();
   state.targetHours = targetH ? parseFloat(targetH) : null;
+  state.started = localStorage.getItem(LS.started) === "1";
   // <input type=datetime-local> はローカルタイム
   const d = new Date(startISO);
   const pad = (n) => String(n).padStart(2, "0");
@@ -542,6 +646,7 @@ function resetSettings() {
   localStorage.removeItem(LS.targetHours);
   localStorage.removeItem(LS.history);
   localStorage.removeItem(LS.lastFix);
+  localStorage.removeItem(LS.started);
   loadSettings();
   state.curFix = null;
   state.curKm = null;
@@ -576,11 +681,33 @@ function showFatal(msg) {
   bar.textContent = "エラー: " + (msg && msg.stack ? msg.stack : String(msg));
 }
 
+function setStartToNow() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const label = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  if (!confirm(`スタート時刻を ${label} に設定します。よろしい？`)) return;
+  // 秒以下は切り捨ててローカルタイムで保存（既存の保存形式に合わせる）
+  const local = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes());
+  localStorage.setItem(LS.startISO, local.toISOString());
+  localStorage.setItem(LS.started, "1");
+  state.startMs = local.getTime();
+  state.started = true;
+  // 設定タブの input も同期
+  const setStartEl = document.getElementById("set-start");
+  if (setStartEl) {
+    setStartEl.value = `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}T${pad(local.getHours())}:${pad(local.getMinutes())}`;
+  }
+  renderPace();
+}
+
 function setupUI() {
   // イベントリスナーは即座に付ける（データ読み込みの成否に関係なく動かす）
   document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
   document.getElementById("refresh-gps").addEventListener("click", () => {
     refreshGPS().catch((e) => showFatal(e));
+  });
+  document.getElementById("set-start-now").addEventListener("click", () => {
+    try { setStartToNow(); } catch (e) { showFatal(e); }
   });
   document.getElementById("save-settings").addEventListener("click", () => {
     try { saveSettings(); } catch (e) { showFatal(e); }
