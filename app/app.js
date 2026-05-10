@@ -485,7 +485,17 @@ function initMap() {
 
   state.map = map;
   state.mapLayers = { course: courseLine, ...layers };
-  map.fitBounds(courseLine.getBounds(), { padding: [20, 20] });
+  // 初期表示: GPS現在地（あれば）or スタート地点を中心に半径10km相当
+  const center = state.curFix
+    ? [state.curFix.lat, state.curFix.lon]
+    : [c.start.lat, c.start.lon];
+  const RADIUS_KM = 3;
+  const dLat = RADIUS_KM / 111;
+  const dLon = RADIUS_KM / (111 * Math.cos(center[0] * Math.PI / 180));
+  map.fitBounds([
+    [center[0] - dLat, center[1] - dLon],
+    [center[0] + dLat, center[1] + dLon],
+  ]);
 
   // フィルタボタン配線（一度だけ）
   setupFilterButtons();
@@ -569,9 +579,10 @@ function setGpsState(s) {
   el.className = "gps " + s;
 }
 
-async function refreshGPS() {
+// silent=true で alert を出さず黙って失敗（自動取得用、UX妨げない）
+async function refreshGPS(silent = false) {
   if (!("geolocation" in navigator)) {
-    alert("このブラウザはGPSに対応していません");
+    if (!silent) alert("このブラウザはGPSに対応していません");
     return;
   }
   setGpsState("stale");
@@ -603,8 +614,18 @@ async function refreshGPS() {
   } catch (e) {
     console.warn("GPS error:", e);
     setGpsState("off");
-    alert("GPS取得に失敗: " + (e.message || e.code));
+    if (!silent) alert("GPS取得に失敗: " + (e.message || e.code));
   }
+}
+
+// 可視化（visibilitychange）+ 初回ロード で自動取得。連打防止に30秒スロットル。
+const AUTO_GPS_THROTTLE_MS = 30000;
+function maybeAutoRefreshGPS() {
+  // テストモードで仮想km適用中ならGPS上書きしない
+  if (state.testOverride) return;
+  const lastT = state.curFix && state.curFix.t ? state.curFix.t : 0;
+  if (Date.now() - lastT < AUTO_GPS_THROTTLE_MS) return;
+  refreshGPS(true).catch((e) => console.warn("auto GPS error:", e));
 }
 
 // ---------- 設定 ----------
@@ -674,12 +695,25 @@ function resetSettings() {
 }
 
 // ---------- タブ切り替え ----------
+function recenterMapOnCurrent() {
+  if (!state.map || !state.curFix) return;
+  const RADIUS_KM = 3;
+  const lat = state.curFix.lat, lon = state.curFix.lon;
+  const dLat = RADIUS_KM / 111;
+  const dLon = RADIUS_KM / (111 * Math.cos(lat * Math.PI / 180));
+  state.map.fitBounds([[lat - dLat, lon - dLon], [lat + dLat, lon + dLon]]);
+}
+
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === "tab-" + name));
   if (name === "map") {
     initMap();
-    setTimeout(() => state.map?.invalidateSize(), 50);
+    setTimeout(() => {
+      state.map?.invalidateSize();
+      // マップタブを開く度にGPS現在地中心へ（ペース確認感覚で開くケースが多いので）
+      recenterMapOnCurrent();
+    }, 50);
     updateMyMarker();
   }
 }
@@ -728,6 +762,7 @@ function applyTestKm() {
   state.courseOffsetM = 0;
   state.projPoint = [lat, lon];
   state.paceKmh = null;
+  state.testOverride = true;
   if (state.map) updateMyMarker();
   setGpsState("live");
   renderPace();
@@ -739,6 +774,7 @@ function clearTestKm() {
   state.courseOffsetM = null;
   state.projPoint = null;
   state.paceKmh = null;
+  state.testOverride = false;
   if (state.meMarker && state.map) { state.map.removeLayer(state.meMarker); state.meMarker = null; }
   if (state.projMarker && state.map) { state.map.removeLayer(state.projMarker); state.projMarker = null; }
   if (state.projLine && state.map) { state.map.removeLayer(state.projLine); state.projLine = null; }
@@ -766,6 +802,10 @@ function setStartToNow() {
 }
 
 function setupUI() {
+  // 可視化時の自動GPS取得
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") maybeAutoRefreshGPS();
+  });
   // 練習コース読込時はヘッダーにコース名バッジを出す
   if (!IS_XW100) {
     const banner = document.getElementById("course-banner");
@@ -825,6 +865,8 @@ async function loadData() {
       try { renderPace(); } catch (e) { showFatal(e); }
     }, 1000);
     console.log("[XW100] data loaded:", course.total_km, "km");
+    // 初回ロード時に自動GPS取得（lastFixが古い or 無いなら新規取得）
+    maybeAutoRefreshGPS();
   } catch (e) {
     showFatal(e);
   }

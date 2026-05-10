@@ -1,5 +1,5 @@
 // Service Worker: オフラインキャッシュ + 自動アップデート
-const VERSION = "v0.9.0";
+const VERSION = "v0.10.0";
 const CACHE = `xw100-${VERSION}`;
 const APP_FILES = [
   "./",
