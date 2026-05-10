@@ -372,7 +372,8 @@ function renderPace() {
 function initMap() {
   if (state.map) return;
   const c = state.course;
-  const map = L.map("map", { zoomControl: true, attributionControl: true });
+  const map = L.map("map", { zoomControl: false, attributionControl: true });
+  L.control.zoom({ position: "bottomright" }).addTo(map);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
